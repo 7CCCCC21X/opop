@@ -2,29 +2,31 @@
 <html lang="zh">
 <head>
   <meta charset="UTF-8" />
-  <title>Superchain 积分批量查询</title>
+  <title>Superchain 批量积分查询</title>
   <style>
-    body { font-family: sans-serif; max-width: 900px; margin: auto; padding: 30px; }
-    input, button { padding: 10px; margin: 5px 0; font-size: 14px; }
+    body { font-family: sans-serif; max-width: 1000px; margin: auto; padding: 30px; }
+    button, input { padding: 10px; font-size: 14px; margin: 5px 0; }
+    input[type="text"] { width: 100%; }
+    progress { width: 100%; height: 20px; }
     table { width: 100%; margin-top: 20px; border-collapse: collapse; }
-    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; font-size: 14px; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background: #f0f0f0; }
-    #log { font-size: 13px; color: gray; margin-top: 10px; }
+    #status { margin-top: 10px; font-size: 14px; color: #555; }
   </style>
 </head>
 <body>
 
-  <h2>Superchain 积分排行榜批量查询</h2>
-  <label>起始页码：<input type="number" id="startPage" value="1" min="1" /></label><br>
-  <label>最大页码：<input type="number" id="maxPage" value="5" min="1" /></label><br>
-  <button onclick="fetchData()">开始查询</button>
+  <h2>Superchain Leaderboard 查询工具</h2>
 
-  <div id="log"></div>
+  <button onclick="updateData()">🔁 更新数据（1-1000 页）</button>
+  <progress id="progress" value="0" max="1000"></progress>
+  <div id="status">未开始</div>
 
-  <table id="resultTable" style="display:none;">
+  <h3>查询地址信息</h3>
+  <input type="text" id="searchInput" placeholder="输入钱包地址 0x..." oninput="searchAddress()" />
+  <table>
     <thead>
       <tr>
-        <th>#</th>
         <th>地址</th>
         <th>积分</th>
         <th>徽章数</th>
@@ -35,51 +37,90 @@
   </table>
 
   <script>
-    async function fetchData() {
-      const startPage = parseInt(document.getElementById("startPage").value);
-      const maxPage = parseInt(document.getElementById("maxPage").value);
-      const tbody = document.getElementById("resultBody");
-      const table = document.getElementById("resultTable");
-      const log = document.getElementById("log");
+    const API_URL = "/api/leaderboard";
+    const MAX_PAGE = 1000;
+    const CONCURRENCY = 10; // 并发请求数量
 
-      tbody.innerHTML = "";
-      table.style.display = "table";
-      log.innerText = "⏳ 开始查询中...";
+    let leaderboardData = [];
 
-      let index = 1;
-      for (let page = startPage; page <= maxPage; page++) {
-        log.innerText = `📄 正在加载第 ${page} 页...`;
+    function saveToCache(data) {
+      localStorage.setItem("leaderboardData", JSON.stringify(data));
+      localStorage.setItem("lastUpdate", new Date().toISOString());
+    }
 
-        try {
-          const res = await fetch(`/api/leaderboard?page=${page}`);
-          const json = await res.json();
-          const list = json.data || [];
+    function loadFromCache() {
+      const cached = localStorage.getItem("leaderboardData");
+      if (cached) {
+        leaderboardData = JSON.parse(cached);
+        document.getElementById("status").innerText = `✅ 已加载本地缓存，共 ${leaderboardData.length} 条记录`;
+      }
+    }
 
-          for (const item of list) {
-            const row = document.createElement("tr");
-            row.innerHTML = `
-              <td>${index++}</td>
-              <td>${item.superaccount}</td>
-              <td>${item.total_points}</td>
-              <td>${item.total_badges}</td>
-              <td>${item.superChainId}</td>
-            `;
-            tbody.appendChild(row);
-          }
+    function chunk(arr, size) {
+      const chunks = [];
+      for (let i = 0; i < arr.length; i += size) {
+        chunks.push(arr.slice(i, i + size));
+      }
+      return chunks;
+    }
 
-          if (!json.hasNextPage) {
-            log.innerText = `✅ 已到最后一页（第 ${page} 页），查询完成`;
-            break;
-          }
-        } catch (err) {
-          log.innerText = `❌ 第 ${page} 页查询失败：${err.message}`;
-          break;
-        }
+    async function updateData() {
+      leaderboardData = [];
+      const pages = Array.from({ length: MAX_PAGE }, (_, i) => i + 1);
+      const chunks = chunk(pages, CONCURRENCY);
+      const progress = document.getElementById("progress");
+      const status = document.getElementById("status");
+      let completed = 0;
+
+      for (const group of chunks) {
+        const promises = group.map(page =>
+          fetch(`${API_URL}?page=${page}`)
+            .then(res => res.json())
+            .then(json => json.data || [])
+            .catch(() => [])
+        );
+
+        const results = await Promise.all(promises);
+        results.flat().forEach(item => {
+          leaderboardData.push({
+            address: item.superaccount,
+            points: item.total_points,
+            badges: item.total_badges,
+            chain: item.superChainId
+          });
+        });
+
+        completed += group.length;
+        progress.value = completed;
+        status.innerText = `🔄 已更新 ${completed} / ${MAX_PAGE} 页 (${leaderboardData.length} 条记录)`;
       }
 
-      log.innerText = `✅ 共加载 ${index - 1} 条数据`;
+      saveToCache(leaderboardData);
+      status.innerText = `✅ 数据更新完成，共 ${leaderboardData.length} 条记录`;
     }
-  </script>
 
+    function searchAddress() {
+      const val = document.getElementById("searchInput").value.trim().toLowerCase();
+      const tbody = document.getElementById("resultBody");
+      tbody.innerHTML = "";
+
+      if (!val || val.length < 6) return;
+
+      const result = leaderboardData.filter(entry => entry.address.toLowerCase().includes(val));
+      for (const r of result) {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${r.address}</td>
+          <td>${r.points}</td>
+          <td>${r.badges}</td>
+          <td>${r.chain}</td>
+        `;
+        tbody.appendChild(row);
+      }
+    }
+
+    // 页面加载时尝试读取缓存
+    window.onload = loadFromCache;
+  </script>
 </body>
 </html>
