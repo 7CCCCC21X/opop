@@ -5,26 +5,30 @@
   <title>Superchain 批量积分查询</title>
   <style>
     body { font-family: sans-serif; max-width: 1000px; margin: auto; padding: 30px; }
-    button, input { padding: 10px; font-size: 14px; margin: 5px 0; }
-    input[type="text"] { width: 100%; }
+    button, input, textarea { padding: 10px; font-size: 14px; margin: 5px 0; }
+    textarea { width: 100%; height: 120px; }
     progress { width: 100%; height: 20px; }
     table { width: 100%; margin-top: 20px; border-collapse: collapse; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background: #f0f0f0; }
     #status, #lastUpdate { margin-top: 10px; font-size: 14px; color: #555; }
+    #loading { display: none; font-weight: bold; color: green; margin-top: 10px; }
   </style>
 </head>
 <body>
 
   <h2>Superchain Leaderboard 查询工具</h2>
 
-  <button onclick="updateData()">🔁 更新数据</button>
+  <button onclick="updateData()">🔁 更新数据（1-2000 页）</button>
   <progress id="progress" value="0" max="2000"></progress>
+  <div id="loading">⏳ 正在加载中...</div>
   <div id="status">未开始</div>
   <div id="lastUpdate"></div>
 
-  <h3>查询地址信息</h3>
-  <input type="text" id="searchInput" placeholder="输入钱包地址 0x..." oninput="searchAddress()" />
+  <h3>批量查询地址</h3>
+  <textarea id="searchInput" placeholder="每行输入一个地址（支持模糊匹配）"></textarea><br>
+  <button onclick="searchAddress()">🔍 开始查询</button>
+
   <table>
     <thead>
       <tr>
@@ -39,9 +43,9 @@
 
   <script>
     const API_URL = "/api/leaderboard";
-    const MAX_PAGE = 2000;          // ✅ 改为 2000 页
-    const CONCURRENCY = 20;         // ✅ 并发加快为 20
-
+    const MAX_PAGE = 2000;
+    const CONCURRENCY = 20;
+    const RETRY_LIMIT = 3;
     let leaderboardData = [];
 
     function saveToCache(data) {
@@ -76,23 +80,38 @@
       return chunks;
     }
 
+    async function fetchWithRetry(page, retries = RETRY_LIMIT) {
+      try {
+        const res = await fetch(`${API_URL}?page=${page}`);
+        const json = await res.json();
+        return json.data || [];
+      } catch (e) {
+        if (retries > 0) {
+          console.warn(`第 ${page} 页请求失败，重试中 (${RETRY_LIMIT - retries + 1})...`);
+          await new Promise(r => setTimeout(r, 300)); // 等待 300ms 再试
+          return await fetchWithRetry(page, retries - 1);
+        } else {
+          console.error(`第 ${page} 页请求失败，已跳过`);
+          return [];
+        }
+      }
+    }
+
     async function updateData() {
       leaderboardData = [];
       const pages = Array.from({ length: MAX_PAGE }, (_, i) => i + 1);
       const chunks = chunk(pages, CONCURRENCY);
       const progress = document.getElementById("progress");
       const status = document.getElementById("status");
+      const loading = document.getElementById("loading");
+
       let completed = 0;
+      loading.style.display = "block";
 
       for (const group of chunks) {
-        const promises = group.map(page =>
-          fetch(`${API_URL}?page=${page}`)
-            .then(res => res.json())
-            .then(json => json.data || [])
-            .catch(() => [])
-        );
-
+        const promises = group.map(page => fetchWithRetry(page));
         const results = await Promise.all(promises);
+
         results.flat().forEach(item => {
           leaderboardData.push({
             address: item.superaccount,
@@ -104,31 +123,53 @@
 
         completed += group.length;
         progress.value = completed;
-        status.innerText = `🔄 已更新 ${completed} / ${MAX_PAGE} 页，共 ${leaderboardData.length} 条记录`;
+
+        const percent = ((completed / MAX_PAGE) * 100).toFixed(1);
+        status.innerText = `✅ 正在更新中：${percent}%`;
       }
 
       saveToCache(leaderboardData);
-      status.innerText = `✅ 数据更新完成，共 ${leaderboardData.length} 条记录`;
+      loading.style.display = "none";
+      status.innerText = `✅ 数据更新完成`;
     }
 
     function searchAddress() {
-      const val = document.getElementById("searchInput").value.trim().toLowerCase();
+      const lines = document.getElementById("searchInput").value
+        .trim()
+        .split("\n")
+        .map(l => l.trim().toLowerCase())
+        .filter(Boolean);
+
       const tbody = document.getElementById("resultBody");
       tbody.innerHTML = "";
 
-      if (!val || val.length < 6) return;
+      if (!lines.length) return;
 
-      const result = leaderboardData.filter(entry => entry.address.toLowerCase().includes(val));
-      for (const r of result) {
-        const row = document.createElement("tr");
-        row.innerHTML = `
-          <td>${r.address}</td>
-          <td>${r.points}</td>
-          <td>${r.badges}</td>
-          <td>${r.chain}</td>
-        `;
-        tbody.appendChild(row);
-      }
+      let foundCount = 0;
+
+      lines.forEach(query => {
+        const result = leaderboardData.filter(entry => entry.address.toLowerCase().includes(query));
+
+        if (result.length === 0) {
+          const row = document.createElement("tr");
+          row.innerHTML = `<td>${query}</td><td colspan="3">❌ 未找到</td>`;
+          tbody.appendChild(row);
+        } else {
+          result.forEach(entry => {
+            const row = document.createElement("tr");
+            row.innerHTML = `
+              <td>${entry.address}</td>
+              <td>${entry.points}</td>
+              <td>${entry.badges}</td>
+              <td>${entry.chain}</td>
+            `;
+            tbody.appendChild(row);
+            foundCount++;
+          });
+        }
+      });
+
+      document.getElementById("status").innerText = `🔍 查询完成，成功匹配 ${foundCount} 条地址`;
     }
 
     window.onload = loadFromCache;
