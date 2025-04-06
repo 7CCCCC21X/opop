@@ -11,16 +11,17 @@
     table { width: 100%; margin-top: 20px; border-collapse: collapse; }
     th, td { border: 1px solid #ccc; padding: 8px; text-align: center; }
     th { background: #f0f0f0; }
-    #status { margin-top: 10px; font-size: 14px; color: #555; }
+    #status, #lastUpdate { margin-top: 10px; font-size: 14px; color: #555; }
   </style>
 </head>
 <body>
 
   <h2>Superchain Leaderboard 查询工具</h2>
 
-  <button onclick="updateData()">🔁 更新数据（1-1000 页）</button>
-  <progress id="progress" value="0" max="1000"></progress>
+  <button onclick="updateData()">🔁 更新数据</button>
+  <progress id="progress" value="0" max="2000"></progress>
   <div id="status">未开始</div>
+  <div id="lastUpdate"></div>
 
   <h3>查询地址信息</h3>
   <input type="text" id="searchInput" placeholder="输入钱包地址 0x..." oninput="searchAddress()" />
@@ -38,21 +39,32 @@
 
   <script>
     const API_URL = "/api/leaderboard";
-    const MAX_PAGE = 1000;
-    const CONCURRENCY = 10; // 并发请求数量
+    const MAX_PAGE = 2000;          // ✅ 改为 2000 页
+    const CONCURRENCY = 20;         // ✅ 并发加快为 20
 
     let leaderboardData = [];
 
     function saveToCache(data) {
+      const now = new Date().toISOString();
       localStorage.setItem("leaderboardData", JSON.stringify(data));
-      localStorage.setItem("lastUpdate", new Date().toISOString());
+      localStorage.setItem("lastUpdate", now);
+      updateLastUpdateUI(now);
     }
 
     function loadFromCache() {
       const cached = localStorage.getItem("leaderboardData");
+      const time = localStorage.getItem("lastUpdate");
       if (cached) {
         leaderboardData = JSON.parse(cached);
         document.getElementById("status").innerText = `✅ 已加载本地缓存，共 ${leaderboardData.length} 条记录`;
+        updateLastUpdateUI(time);
+      }
+    }
+
+    function updateLastUpdateUI(time) {
+      if (time) {
+        const dt = new Date(time);
+        document.getElementById("lastUpdate").innerText = `🕒 上次更新时间：${dt.toLocaleString()}`;
       }
     }
 
@@ -92,7 +104,7 @@
 
         completed += group.length;
         progress.value = completed;
-        status.innerText = `🔄 已更新 ${completed} / ${MAX_PAGE} 页 (${leaderboardData.length} 条记录)`;
+        status.innerText = `🔄 已更新 ${completed} / ${MAX_PAGE} 页，共 ${leaderboardData.length} 条记录`;
       }
 
       saveToCache(leaderboardData);
@@ -119,8 +131,8 @@
       }
     }
 
-    // 页面加载时尝试读取缓存
     window.onload = loadFromCache;
   </script>
+
 </body>
 </html>
