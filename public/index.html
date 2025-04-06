@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <title>Superchain 积分批量查询</title>
+  <style>
+    body { font-family: sans-serif; max-width: 900px; margin: auto; padding: 30px; }
+    input, button { padding: 10px; margin: 5px 0; font-size: 14px; }
+    table { width: 100%; margin-top: 20px; border-collapse: collapse; }
+    th, td { border: 1px solid #ccc; padding: 8px; text-align: center; font-size: 14px; }
+    th { background: #f0f0f0; }
+    #log { font-size: 13px; color: gray; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+  <h2>Superchain 积分排行榜批量查询</h2>
+  <label>起始页码：<input type="number" id="startPage" value="1" min="1" /></label><br>
+  <label>最大页码：<input type="number" id="maxPage" value="5" min="1" /></label><br>
+  <button onclick="fetchData()">开始查询</button>
+
+  <div id="log"></div>
+
+  <table id="resultTable" style="display:none;">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>地址</th>
+        <th>积分</th>
+        <th>徽章数</th>
+        <th>SuperChain ID</th>
+      </tr>
+    </thead>
+    <tbody id="resultBody"></tbody>
+  </table>
+
+  <script>
+    async function fetchData() {
+      const startPage = parseInt(document.getElementById("startPage").value);
+      const maxPage = parseInt(document.getElementById("maxPage").value);
+      const tbody = document.getElementById("resultBody");
+      const table = document.getElementById("resultTable");
+      const log = document.getElementById("log");
+
+      tbody.innerHTML = "";
+      table.style.display = "table";
+      log.innerText = "⏳ 开始查询中...";
+
+      let index = 1;
+      for (let page = startPage; page <= maxPage; page++) {
+        log.innerText = `📄 正在加载第 ${page} 页...`;
+
+        try {
+          const res = await fetch(`/api/leaderboard?page=${page}`);
+          const json = await res.json();
+          const list = json.data || [];
+
+          for (const item of list) {
+            const row = document.createElement("tr");
+            row.innerHTML = `
+              <td>${index++}</td>
+              <td>${item.superaccount}</td>
+              <td>${item.total_points}</td>
+              <td>${item.total_badges}</td>
+              <td>${item.superChainId}</td>
+            `;
+            tbody.appendChild(row);
+          }
+
+          if (!json.hasNextPage) {
+            log.innerText = `✅ 已到最后一页（第 ${page} 页），查询完成`;
+            break;
+          }
+        } catch (err) {
+          log.innerText = `❌ 第 ${page} 页查询失败：${err.message}`;
+          break;
+        }
+      }
+
+      log.innerText = `✅ 共加载 ${index - 1} 条数据`;
+    }
+  </script>
+
+</body>
+</html>
